@@ -7,6 +7,7 @@ from backend.models.database import (
 )
 from backend.services.hindsight_service import hindsight_service, HindsightService
 from backend.services.llm_service import llm_service, LLMService
+from backend.services.applicability_service import ContradictionDetector
 from backend.schemas.reasoning_schemas import AgentReasoningInput, AgentReasoningOutput
 
 class AgentPipelineService:
@@ -86,17 +87,23 @@ class AgentPipelineService:
                     "scope": [agent_name]
                 })
 
-        # 3. Build reasoning input
+        # 3. Detect conflicting historical memories
+        conflicts = ContradictionDetector.detect_conflicts(applicable_memories)
+        has_conflicts = len(conflicts) > 0
+
+        # 4. Build reasoning input
         reasoning_input = AgentReasoningInput(
             agent_id=agent.id,
             agent_name=agent.name,
             task_type=task_type,
             customer_tier=customer_tier,
             user_prompt=user_prompt,
-            relevant_memories=applicable_memories
+            relevant_memories=applicable_memories,
+            has_conflicts=has_conflicts,
+            conflicting_memories=conflicts
         )
 
-        # 4. Generate structured response
+        # 5. Generate structured response
         agent_output = self.llm.generate_agent_response(reasoning_input)
 
         # 5. Save interaction

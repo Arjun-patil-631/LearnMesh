@@ -14,6 +14,10 @@
 | Phase 8 | Memory Explorer & Learning Lineage UI | 2026-09-28 | 2026-09-28 | UI tabs verified | `17bb459` | COMPLETE |
 | Phase 9 | Realistic Seed Data & Scenario Walkthrough | 2026-09-28 | 2026-09-28 | Seed script OK | `3b9b6c6` | COMPLETE |
 | Phase 10 | Cross-Agent End-to-End Acceptance Suite | 2026-09-28 | 2026-09-28 | 11/11 passed | `91bddfe` | COMPLETE |
-| Phase 11 | Hardening & Degraded Modes | 2026-09-28 | 2026-09-28 | Verified | In progress | COMPLETE |
-| Phase 12 | Architecture & Demo Documentation | 2026-09-28 | 2026-09-28 | Docs complete | Pending | COMPLETE |
-| Phase 13 | Demo-Ready Release Verification | 2026-09-28 | 2026-09-28 | All tests green | Pending | COMPLETE |
+| Phase 11 | Hardening & Degraded Modes | 2026-09-28 | 2026-09-28 | Verified | `fbe0c80` | COMPLETE |
+| Phase 12 | Architecture & Demo Documentation | 2026-09-28 | 2026-09-28 | Docs complete | `v0.1.0-demo-ready` | COMPLETE |
+| Phase 13 | Live Groq Model Integration (openai/gpt-oss-120b) | 2026-09-28 | 2026-09-28 | Reasoning tags | `fbe0c80` | COMPLETE |
+| Phase 14 | Side-by-Side Before/After Comparison Tab | 2026-09-28 | 2026-09-28 | UI verified | Pending | COMPLETE |
+| Phase 15 | Contradiction Detection & Safety Escalation | 2026-09-28 | 2026-09-28 | 14/14 passed | Pending | COMPLETE |
+| Phase 16 | Final Competition Hardening & QA | 2026-09-28 | 2026-09-28 | 14/14 passed | Pending | COMPLETE |
+

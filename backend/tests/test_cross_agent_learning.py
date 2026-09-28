@@ -121,3 +121,42 @@ def test_cross_agent_learning_loop(test_db):
     assert "HM-0021" in output2.used_memory_ids
     assert "approval" in output2.response_text.lower()
     assert "enterprise" in output2.response_text.lower()
+
+def test_contradiction_pipeline_flow(test_db):
+    """
+    Verify that when conflicting policies are recalled simultaneously,
+    the pipeline flags the conflict and safely escalates rather than taking unsafe action.
+    """
+    mock_hindsight = MagicMock()
+    mock_hindsight.recall.return_value = [
+        RecalledMemoryItem(
+            id="HM-001",
+            text="Require approval prior to refund commitment.",
+            context="Enterprise policy",
+            tags=["refund"],
+            metadata={}
+        ),
+        RecalledMemoryItem(
+            id="HM-002",
+            text="Refund customer immediately without waiting for approval.",
+            context="Fast resolution policy",
+            tags=["refund"],
+            metadata={}
+        )
+    ]
+
+    agent_service = AgentPipelineService(hindsight=mock_hindsight)
+
+    int_result, output, memories = agent_service.run_interaction(
+        db=test_db,
+        agent_id="agent-support",
+        user_prompt="I need a refund immediately.",
+        task_type="refund",
+        customer_tier="enterprise"
+    )
+
+    assert output.action_type == "escalation_required"
+    assert output.requires_approval is True
+    assert "conflicting" in output.response_text.lower()
+    assert set(output.used_memory_ids) == {"HM-001", "HM-002"}
+

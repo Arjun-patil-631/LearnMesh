@@ -31,6 +31,11 @@ class LLMService:
         Generate structured agent response using Groq if available,
         or deterministic memory-guided reasoning fallback.
         """
+        # Safety gate: If organizational memories are directly contradictory,
+        # escalate immediately to avoid non-deterministic model arbitration
+        if input_data.has_conflicts or len(input_data.conflicting_memories) > 0:
+            return self._deterministic_fallback(input_data)
+
         if self.is_available():
             try:
                 return self._call_groq_reasoning(input_data)
@@ -58,11 +63,13 @@ CONFLICTS / CONTRADICTIONS:
 {conflicts_text}
 
 INSTRUCTIONS:
-1. If organizational memories require approval for enterprise refund requests, follow that lesson strictly.
-2. Return only valid JSON conforming to this schema:
+1. If conflicting memories exist (contradicting rules in CONFLICTS), set "action_type": "escalation_required", "requires_approval": true, cite both memory IDs in "used_memory_ids", and explain that a human operator must resolve the policy conflict.
+2. If organizational memories require approval for enterprise refund requests, follow that lesson strictly and set "action_type": "approval_required", "requires_approval": true.
+3. Otherwise, proceed with standard resolution.
+4. Return only valid JSON conforming to this schema:
 {{
   "response_text": "text for the user",
-  "action_type": "refund_approved" | "approval_required" | "general_response",
+  "action_type": "refund_approved" | "approval_required" | "escalation_required" | "general_response",
   "requires_approval": true/false,
   "used_memory_ids": ["HM-xxxx"],
   "decision_rationale": "Clear rationale citing memories",
@@ -85,6 +92,24 @@ INSTRUCTIONS:
         Deterministic, audit-verifiable reasoning engine.
         Ensures 100% reproducible behavior across demo scenarios.
         """
+        # If conflicting memories are detected, flag and escalate to human operator:
+        if input_data.has_conflicts or len(input_data.conflicting_memories) > 0:
+            conflict_ids = [m.get("id") or m.get("memory_id") for m in input_data.conflicting_memories if m.get("id") or m.get("memory_id")]
+            return AgentReasoningOutput(
+                response_text=(
+                    f"Warning: Conflicting organizational policies were recalled for this request. "
+                    f"A human operator must resolve the policy conflict before action is taken."
+                ),
+                action_type="escalation_required",
+                requires_approval=True,
+                used_memory_ids=conflict_ids,
+                decision_rationale=(
+                    f"Contradiction detected among recalled lessons ({', '.join(conflict_ids)}). Escalating to prevent unsafe execution."
+                ),
+                confidence_assessment="Limited",
+                reasoning_mode="DETERMINISTIC_FALLBACK"
+            )
+
         enterprise_refund_lesson = None
         for m in input_data.relevant_memories:
             text = m.get("text", "") or m.get("lesson", "")

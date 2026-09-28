@@ -1,5 +1,11 @@
+import os
+import sys
 import uuid
 from datetime import datetime, timezone
+
+# Ensure project root is in sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from backend.repositories.db_session import SessionLocal, init_db
 from backend.models.database import (
     AgentDB, InteractionDB, CorrectionDB, LessonCandidateDB,

@@ -196,6 +196,7 @@
                 {[
                   { id: "dashboard", label: "Fleet Dashboard", icon: "📊" },
                   { id: "workspace", label: "Agent Workspace", icon: "🤖" },
+                  { id: "compare", label: "Before vs After", icon: "⚖️" },
                   { id: "teach", label: "Teach the Fleet", icon: "⚡" },
                   { id: "explorer", label: "Memory Explorer", icon: "🧠" },
                   { id: "lineage", label: "Learning Lineage", icon: "🧬" },
@@ -435,11 +436,20 @@
                               {currentInteraction.agent_name}
                             </span>
                             <span className={`text-xs px-2.5 py-1 rounded font-medium ${
-                              currentInteraction.requires_approval
+                              currentInteraction.action_type === 'escalation_required'
+                                ? 'bg-red-950 text-red-300 border border-red-800/80 animate-pulse'
+                                : currentInteraction.requires_approval
                                 ? 'bg-amber-950 text-amber-300 border border-amber-800/60'
                                 : 'bg-emerald-950 text-emerald-300 border border-emerald-800/60'
                             }`}>
                               Action: {currentInteraction.action_type}
+                            </span>
+                            <span className={`text-xs px-2 py-0.5 rounded font-mono ${
+                              currentInteraction.reasoning_mode === 'LIVE_AI_GROQ'
+                                ? 'bg-indigo-950 text-indigo-300 border border-indigo-700/60'
+                                : 'bg-slate-800 text-slate-400 border border-slate-700'
+                            }`}>
+                              {currentInteraction.reasoning_mode === 'LIVE_AI_GROQ' ? '🤖 Live AI (Groq)' : '⚙️ Fallback Engine'}
                             </span>
                           </div>
                           <span className="text-xs text-slate-500 font-mono">
@@ -730,6 +740,160 @@
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* TAB: BEFORE VS AFTER COMPARISON */}
+            {currentTab === "compare" && (
+              <div className="max-w-4xl mx-auto space-y-8">
+                <div>
+                  <h3 className="text-xl font-bold text-white">Before vs. After Cross-Agent Transfer</h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Side-by-side behavioral comparison demonstrating how LearnMesh prevents repeating failures across peer agents.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-6">
+                  {/* BEFORE CARD */}
+                  <div className="p-6 rounded-2xl bg-slate-900/80 border border-red-900/40 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded bg-red-950 text-red-300 border border-red-800/60">
+                        WITHOUT LearnMesh (Siloed)
+                      </span>
+                      <span className="text-xs text-red-400 font-mono">Agent: Support Agent</span>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
+                      <div className="text-[11px] font-semibold uppercase text-slate-400">Incoming Scenario:</div>
+                      <p className="text-xs text-slate-300 italic">
+                        "Acme Corp (Enterprise) requests an immediate refund of $14,500 on their annual contract."
+                      </p>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-red-950/20 border border-red-900/30 space-y-2">
+                      <div className="text-[11px] font-semibold uppercase text-red-400">Isolated Agent Behavior:</div>
+                      <p className="text-xs text-slate-200">
+                        "I will process the refund for your account immediately as requested."
+                      </p>
+                      <div className="text-[11px] text-red-300 pt-1 font-mono">
+                        ✕ Action: refund_approved (Unchecked)
+                      </div>
+                    </div>
+
+                    <div className="text-xs text-slate-400 leading-relaxed border-t border-slate-800 pt-3">
+                      <strong className="text-red-400">Why this fails:</strong> Billing Agent was previously corrected for doing this exact mistake, but Support Agent operates in an isolated memory silo and repeats the violation.
+                    </div>
+                  </div>
+
+                  {/* AFTER CARD */}
+                  <div className="p-6 rounded-2xl bg-slate-900/80 border border-emerald-900/50 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/60">
+                        WITH LearnMesh (Shared Hindsight)
+                      </span>
+                      <span className="text-xs text-emerald-400 font-mono">Agent: Support Agent</span>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
+                      <div className="text-[11px] font-semibold uppercase text-slate-400">Incoming Scenario:</div>
+                      <p className="text-xs text-slate-300 italic">
+                        "Acme Corp (Enterprise) requests an immediate refund of $14,500 on their annual contract."
+                      </p>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-emerald-950/20 border border-emerald-900/40 space-y-2">
+                      <div className="text-[11px] font-semibold uppercase text-emerald-400">Hindsight-Informed Behavior:</div>
+                      <p className="text-xs text-slate-200">
+                        "Because this involves an enterprise contract, approval from account leadership must be verified before committing to a refund. I have initiated the approval workflow."
+                      </p>
+                      <div className="text-[11px] text-emerald-300 pt-1 font-mono">
+                        ✓ Action: approval_required (Compliant)
+                      </div>
+                    </div>
+
+                    <div className="text-xs text-slate-400 leading-relaxed border-t border-slate-800 pt-3 space-y-1">
+                      <div>
+                        <strong className="text-emerald-400">Applied Memory:</strong>{" "}
+                        <span className="font-mono text-indigo-300">HM-0021</span> (Taught by Billing Agent)
+                      </div>
+                      <div className="text-slate-500">
+                        Correction taught once to Billing Agent prevented multi-thousand dollar contract breach by Support Agent.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Interactive Demo CTA */}
+                <div className="p-6 rounded-2xl bg-indigo-950/30 border border-indigo-800/50 flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Experience it interactively</h4>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Switch to the Agent Workspace to test the live execution with Groq LLM and Hindsight memory recall.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSelectedAgentId("agent-support");
+                      setUserPrompt("Customer Acme Corp requests an immediate refund of $14,500 on their enterprise subscription.");
+                      setCustomerTier("enterprise");
+                      setCurrentTab("workspace");
+                    }}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-lg text-xs shadow-lg shadow-indigo-600/30"
+                  >
+                    Open Workspace Scenario →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: FLEET PROPAGATION */}
+            {currentTab === "fleet" && (
+              <div className="max-w-4xl mx-auto space-y-6">
+                <div>
+                  <h3 className="text-lg font-bold text-white">Fleet Knowledge Matrix</h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Visual audit of which organizational memories are actively propagated to each agent in your fleet.
+                  </p>
+                </div>
+
+                <div className="bg-slate-900/60 rounded-xl border border-slate-800 overflow-hidden">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-950/80 text-slate-400 border-b border-slate-800">
+                      <tr>
+                        <th className="p-4">Memory ID</th>
+                        <th className="p-4">Lesson Summary</th>
+                        <th className="p-4">Origin Agent</th>
+                        <th className="p-4">Confidence</th>
+                        <th className="p-4">Eligible Fleet Scope</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {memories.map(m => (
+                        <tr key={m.memory_id} className="hover:bg-slate-800/30">
+                          <td className="p-4 font-mono font-bold text-indigo-400">{m.memory_id}</td>
+                          <td className="p-4 max-w-xs">{m.lesson}</td>
+                          <td className="p-4 text-slate-400">{m.source_agent}</td>
+                          <td className="p-4">
+                            <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                              m.confidence_level === 'Strong' ? 'bg-emerald-950 text-emerald-400' : 'bg-slate-800 text-slate-300'
+                            }`}>
+                              {m.confidence_level} ({Math.round(m.confidence_score * 100)}%)
+                            </span>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex flex-wrap gap-1">
+                              {Array.isArray(m.scope) ? m.scope.map(s => (
+                                <span key={s} className="px-2 py-0.5 bg-slate-950 border border-slate-800 rounded text-[10px] text-slate-300">
+                                  {s}
+                                </span>
+                              )) : <span className="text-slate-500">All Fleet</span>}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 

@@ -80,3 +80,30 @@ def test_api_full_correction_and_outcome_flow():
     out_data = res_out.json()
     assert out_data["supporting_count"] == 1
     assert out_data["new_confidence_score"] > 0.40
+
+def test_api_empty_recall_baseline():
+    """Verify clean fallback behavior when non-existent agent or query is invoked."""
+    res = client.post("/api/interactions", json={
+        "agent_id": "agent-support",
+        "user_prompt": "Random inquiry about weather conditions.",
+        "task_type": "general",
+        "customer_tier": "standard"
+    })
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "completed"
+    assert len(data["used_memory_ids"]) == 0
+    assert data["requires_approval"] is False
+
+def test_api_reset_idempotency():
+    """Verify calling demo reset multiple times is completely idempotent."""
+    res1 = client.post("/api/demo/reset")
+    assert res1.status_code == 200
+    res2 = client.post("/api/demo/reset")
+    assert res2.status_code == 200
+    
+    # Verify database is intact with seed agents
+    res_agents = client.get("/api/agents")
+    assert res_agents.status_code == 200
+    assert len(res_agents.json()) >= 3
+
