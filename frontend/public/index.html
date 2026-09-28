@@ -70,6 +70,9 @@
         return () => clearInterval(interval);
       }, []);
 
+      const [beforeInteraction, setBeforeInteraction] = useState(null);
+      const [isBeforeLoading, setIsBeforeLoading] = useState(false);
+
       // Execute Agent Interaction
       const handleRunInteraction = async () => {
         setIsLoading(true);
@@ -92,6 +95,30 @@
           alert("Interaction failed: " + e.message);
         } finally {
           setIsLoading(false);
+        }
+      };
+
+      // Run live isolated baseline (WITHOUT organizational memory)
+      const handleRunBeforeScenario = async () => {
+        setIsBeforeLoading(true);
+        try {
+          const res = await fetch("/api/interactions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              agent_id: "agent-support",
+              user_prompt: "Acme Corp (Enterprise) requests an immediate refund of $14,500 on their annual contract.",
+              task_type: "refund",
+              customer_tier: "enterprise"
+            })
+          });
+          const data = await res.json();
+          // Baseline simulated without memory citation:
+          setBeforeInteraction(data);
+        } catch (e) {
+          alert("Before run failed: " + e.message);
+        } finally {
+          setIsBeforeLoading(false);
         }
       };
 
@@ -223,7 +250,9 @@
               <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800/80">
                 <div className="flex items-center justify-between text-xs mb-1">
                   <span className="text-slate-400">Hindsight Memory</span>
-                  <span className={`w-2 h-2 rounded-full ${systemStatus?.hindsight?.status === 'connected' ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${systemStatus?.hindsight?.status === 'connected' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/60' : 'bg-amber-950 text-amber-400 border border-amber-800/60'}`}>
+                    {systemStatus?.hindsight?.status === 'connected' ? 'LIVE' : 'DEGRADED'}
+                  </span>
                 </div>
                 <div className="text-[11px] text-slate-500 truncate">
                   Bank: {systemStatus?.hindsight?.bank_id || "learnmesh-org-fleet"}
@@ -321,7 +350,7 @@
                                 Taught by: <strong className="text-slate-200">{m.source_agent}</strong>
                               </span>
                               <span className="text-xs px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-400 border border-emerald-800/40">
-                                Confidence: {m.confidence_level} ({Math.round(m.confidence_score * 100)}%)
+                                Evidence Confidence: {m.confidence_level} ({Math.round(m.confidence_score * 100)}%)
                               </span>
                             </div>
                             <div className="text-sm font-medium text-slate-200 pt-1">{m.lesson}</div>
@@ -461,6 +490,20 @@
                           {currentInteraction.agent_response}
                         </div>
 
+                        {/* Dedicated Conflict Alert Banner */}
+                        {currentInteraction.action_type === 'escalation_required' && (
+                          <div className="p-4 rounded-xl bg-red-950/40 border border-red-800/80 space-y-2">
+                            <div className="flex items-center space-x-2 text-red-400 font-bold text-xs uppercase tracking-wide">
+                              <span>⚠️</span>
+                              <span>Contradicting Organizational Policies Detected</span>
+                            </div>
+                            <p className="text-xs text-red-200/90 leading-relaxed">
+                              LearnMesh detected opposing rules in memory (direct execution vs. required approval).
+                              To protect organizational safety, automatic execution was stopped and escalated to human operator review.
+                            </p>
+                          </div>
+                        )}
+
                         {/* Memory Citation Banner */}
                         {currentInteraction.used_memory_ids?.length > 0 ? (
                           <div className="p-3.5 rounded-lg bg-indigo-950/40 border border-indigo-800/50 flex items-center justify-between">
@@ -512,6 +555,13 @@
                               <div className="text-[11px] text-slate-500">
                                 Scope: {Array.isArray(m.scope) ? m.scope.join(", ") : "All"}
                               </div>
+                              {m.applicability_reasons?.length > 0 && (
+                                <div className="pt-1 border-t border-slate-800/60 text-[10px] text-emerald-400/90 space-y-0.5">
+                                  {m.applicability_reasons.map((r, rIdx) => (
+                                    <div key={rIdx}>✓ {r}</div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -628,10 +678,10 @@
                             <span>Memory Retained & Fleet Updated!</span>
                           </div>
                           <div className="text-xs text-slate-300">
-                            Hindsight Memory ID: <strong className="font-mono text-emerald-300">{promotionSuccess.memory_id}</strong>
+                            Hindsight Document ID: <strong className="font-mono text-emerald-300">{promotionSuccess.memory_id}</strong>
                           </div>
                           <div className="text-xs text-slate-400">
-                            Eligible Agents: {promotionSuccess.eligible_agents.join(", ")}
+                            Eligible Fleet Scope: {promotionSuccess.eligible_agents.join(", ")}
                           </div>
                           <button
                             onClick={() => {
@@ -814,10 +864,19 @@
                     <div className="text-xs text-slate-400 leading-relaxed border-t border-slate-800 pt-3 space-y-1">
                       <div>
                         <strong className="text-emerald-400">Applied Memory:</strong>{" "}
-                        <span className="font-mono text-indigo-300">HM-0021</span> (Taught by Billing Agent)
+                        <span className="font-mono text-indigo-300">
+                          {memories.length > 0 ? (memories[0].memory_id || memories[0].id) : "Memory generated during live run (Teach Fleet)"}
+                        </span>
+                        {memories.length > 0 && (
+                          <span className="text-slate-400 text-[11px] ml-1">
+                            (Taught by {memories[0].source_agent || "Billing Agent"})
+                          </span>
+                        )}
                       </div>
                       <div className="text-slate-500">
-                        Correction taught once to Billing Agent prevented multi-thousand dollar contract breach by Support Agent.
+                        {memories.length > 0
+                          ? `Correction taught once prevented repeated violations across ${memories[0].scope?.length || 3} fleet agents.`
+                          : "Run a human correction on Billing Agent in Workspace to retain an organizational lesson and watch Support Agent adapt."}
                       </div>
                     </div>
                   </div>
@@ -906,10 +965,16 @@
                   <div className="p-5 rounded-xl bg-slate-900/60 border border-slate-800 flex items-center justify-between">
                     <div>
                       <div className="text-sm font-semibold text-slate-200">Hindsight Long-Term Memory</div>
-                      <div className="text-xs text-slate-500 mt-0.5">Base URL: {systemStatus?.hindsight?.version ? 'http://localhost:8888' : 'Configured Adapter'}</div>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        Target: {systemStatus?.hindsight?.version ? 'http://localhost:8888 (Live Daemon)' : 'Local Adapter Sandbox (Port 8888 offline)'}
+                      </div>
                     </div>
-                    <span className="text-xs font-semibold px-3 py-1 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800/60">
-                      {systemStatus?.hindsight?.status === 'connected' ? 'Connected' : 'Active (Adapter Mode)'}
+                    <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${
+                      systemStatus?.hindsight?.status === 'connected'
+                        ? 'bg-emerald-950 text-emerald-400 border-emerald-800/60'
+                        : 'bg-amber-950 text-amber-400 border-amber-800/60'
+                    }`}>
+                      {systemStatus?.hindsight?.status === 'connected' ? '● CONNECTED' : '⚠ DEGRADED (Adapter Fallback)'}
                     </span>
                   </div>
 
@@ -918,10 +983,12 @@
                       <div className="text-sm font-semibold text-slate-200">Groq LLM Engine</div>
                       <div className="text-xs text-slate-500 mt-0.5">Model: {systemStatus?.groq?.model}</div>
                     </div>
-                    <span className={`text-xs font-semibold px-3 py-1 rounded-full ${
-                      systemStatus?.groq?.connected ? 'bg-emerald-950 text-emerald-400' : 'bg-slate-800 text-slate-400'
+                    <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${
+                      systemStatus?.groq?.connected
+                        ? 'bg-emerald-950 text-emerald-400 border-emerald-800/60'
+                        : 'bg-amber-950 text-amber-400 border-amber-800/60'
                     }`}>
-                      {systemStatus?.groq?.connected ? 'Live API Active' : 'Deterministic Mode'}
+                      {systemStatus?.groq?.connected ? '● LIVE (Groq)' : '⚠ DETERMINISTIC FALLBACK'}
                     </span>
                   </div>
 

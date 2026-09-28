@@ -269,7 +269,7 @@ def get_fleet_learning_summary(db: Session = Depends(get_db)):
 # 8. Repeatable Demo Reset Endpoint
 @router.post("/demo/reset")
 def reset_demo_state(db: Session = Depends(get_db)):
-    # Clear interactions, corrections, lesson candidates, outcomes, system events, memory references
+    # 1. Clear transient interactions, corrections, lesson candidates, outcomes, system events, memory references
     db.query(OutcomeDB).delete()
     db.query(CorrectionDB).delete()
     db.query(LessonCandidateDB).delete()
@@ -278,7 +278,11 @@ def reset_demo_state(db: Session = Depends(get_db)):
     db.query(SystemEventDB).delete()
     db.commit()
 
+    # 2. Reset Hindsight demo session namespace to isolate new memories without deleting permanent store
+    new_session_id = hindsight_service.reset_demo_session()
+
     return {
         "status": "reset_successful",
-        "message": "Demo state reset to clean baseline. Agents ready for live demonstration."
+        "demo_session_id": new_session_id,
+        "message": "Demo state reset to clean baseline. Hindsight demo session isolated for fresh run."
     }

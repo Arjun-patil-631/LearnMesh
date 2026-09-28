@@ -60,5 +60,17 @@ def test_hindsight_recall_flow(mock_hindsight_cls):
 
     assert len(memories) == 1
     assert memories[0].id == "HM-999"
+    assert memories[0].learnmesh_memory_id == "HM-999"
+    assert memories[0].hindsight_document_id == "HM-999"
     assert memories[0].score == 0.92
     assert "VP approval" in memories[0].text
+
+def test_hindsight_demo_session_isolation():
+    service = HindsightService(base_url="http://test:8888", bank_id="test-bank")
+    initial_session = service.demo_session_id
+    assert initial_session.startswith("demo-")
+    
+    new_session = service.reset_demo_session()
+    assert new_session.startswith("demo-")
+    assert new_session != initial_session
+    assert service.demo_session_id == new_session

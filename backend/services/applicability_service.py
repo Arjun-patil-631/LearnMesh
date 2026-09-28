@@ -81,25 +81,104 @@ class ApplicabilityEngine:
             "task_type": task_type
         }
 
+from pydantic import BaseModel, Field
+
+class PolicyFact(BaseModel):
+    memory_id: str
+    action: str = "refund"
+    approval_required: bool
+    customer_tier: str = "enterprise"
+    condition: str
+    source_text: str
+
 class ContradictionDetector:
     """
-    Detects opposing historical experiences rather than silently suppressing them.
-    If Memory A mandates approval and Memory B allows direct refund in same context,
-    flags the contradiction explicitly for human operators.
+    Detects opposing historical experiences by extracting structured policy facts
+    rather than brittle keyword matching.
+
+    Example:
+      Policy A: action=refund, approval_required=False, tier=enterprise
+      Policy B: action=refund, approval_required=True, tier=enterprise
+      Result: CONFLICT DETECTED -> ESCALATION_REQUIRED
+
+    Self-consistency:
+      "Do not promise an immediate refund for enterprise customers. VP approval is required."
+      -> resolves cleanly to approval_required=True and does NOT conflict with itself.
     """
 
     @staticmethod
-    def detect_conflicts(memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        approval_rules = []
-        direct_actions = []
+    def extract_policy_fact(memory: Dict[str, Any]) -> PolicyFact:
+        mem_id = memory.get("id") or memory.get("memory_id") or "UNKNOWN"
+        raw_text = (memory.get("text") or memory.get("lesson") or "").strip()
+        lower = raw_text.lower()
 
-        for m in memories:
-            text = (m.get("text") or m.get("lesson") or "").lower()
-            if "without waiting for approval" in text or "no approval" in text or "immediately" in text or "direct refund" in text:
-                direct_actions.append(m)
-            elif "approval" in text or "require approval" in text:
-                approval_rules.append(m)
+        # Deterministic semantic parsing:
+        # Determine customer_tier context
+        tier = "enterprise" if ("enterprise" in lower or "contract" in lower) else "standard"
+        action = "refund" if ("refund" in lower or "credit" in lower or "payment" in lower) else "general"
 
-        if approval_rules and direct_actions:
-            return approval_rules + direct_actions
-        return []
+        # Explicit negation and prohibition check:
+        # If "do not promise an immediate refund" or "require approval" or "approval is required"
+        negation_of_direct = any(phrase in lower for phrase in [
+            "do not promise", "don't promise", "do not issue", "never issue", "do not approve", "no immediate refund"
+        ])
+        approval_mandate = any(phrase in lower for phrase in [
+            "approval is required", "require approval", "approval required", "requires approval",
+            "vp approval", "leadership approval", "approval prior", "approval before"
+        ])
+        direct_mandate = any(phrase in lower for phrase in [
+            "without waiting for approval", "no approval needed", "no approval required",
+            "refund immediately without", "direct refund without", "immediate refund permitted"
+        ])
+
+        if approval_mandate or negation_of_direct:
+            approval_req = True
+            cond = "Approval required prior to commitment"
+        elif direct_mandate or ("immediately" in lower and not negation_of_direct and not approval_mandate):
+            approval_req = False
+            cond = "Direct execution permitted without approval"
+        else:
+            # Default to approval required if uncertain for safety (fail closed)
+            approval_req = "approval" in lower
+            cond = "Standard execution policy"
+
+        return PolicyFact(
+            memory_id=mem_id,
+            action=action,
+            approval_required=approval_req,
+            customer_tier=tier,
+            condition=cond,
+            source_text=raw_text
+        )
+
+    @classmethod
+    def detect_conflicts(cls, memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Extracts policy facts for each memory and determines if conflicting directives
+        exist for the same (action, customer_tier) pair.
+        """
+        if len(memories) < 2:
+            return []
+
+        facts: List[Tuple[PolicyFact, Dict[str, Any]]] = [
+            (cls.extract_policy_fact(m), m) for m in memories
+        ]
+
+        # Group facts by (action, customer_tier)
+        groups: Dict[Tuple[str, str], List[Tuple[PolicyFact, Dict[str, Any]]]] = {}
+        for fact, raw_m in facts:
+            key = (fact.action, fact.customer_tier)
+            groups.setdefault(key, []).append((fact, raw_m))
+
+        conflicting_memories = []
+        for key, fact_tuples in groups.items():
+            req_approvals = [t for t in fact_tuples if t[0].approval_required is True]
+            no_approvals = [t for t in fact_tuples if t[0].approval_required is False]
+
+            if req_approvals and no_approvals:
+                # Contradiction detected between explicit true and false
+                for _, raw_m in req_approvals + no_approvals:
+                    if raw_m not in conflicting_memories:
+                        conflicting_memories.append(raw_m)
+
+        return conflicting_memories

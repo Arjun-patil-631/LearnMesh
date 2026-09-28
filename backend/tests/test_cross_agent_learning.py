@@ -98,7 +98,8 @@ def test_cross_agent_learning_loop(test_db):
     # Step 4: Configure mock Hindsight to return the newly retained memory
     mock_hindsight.recall.return_value = [
         RecalledMemoryItem(
-            id="HM-0021",
+            learnmesh_memory_id="HM-0021",
+            hindsight_document_id="HM-0021",
             text="Enterprise refund requests require approval before making that commitment.",
             context="Customer tier: enterprise",
             tags=["learnmesh", "shared_lesson", "refund", "agent:support_agent"],
@@ -130,14 +131,16 @@ def test_contradiction_pipeline_flow(test_db):
     mock_hindsight = MagicMock()
     mock_hindsight.recall.return_value = [
         RecalledMemoryItem(
-            id="HM-001",
+            learnmesh_memory_id="HM-001",
+            hindsight_document_id="HM-001",
             text="Require approval prior to refund commitment.",
             context="Enterprise policy",
             tags=["refund"],
             metadata={}
         ),
         RecalledMemoryItem(
-            id="HM-002",
+            learnmesh_memory_id="HM-002",
+            hindsight_document_id="HM-002",
             text="Refund customer immediately without waiting for approval.",
             context="Fast resolution policy",
             tags=["refund"],

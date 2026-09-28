@@ -60,3 +60,32 @@ def test_contradiction_detection():
     ]
     no_conflicts = ContradictionDetector.detect_conflicts(consistent_memories)
     assert len(no_conflicts) == 0
+
+def test_valid_approval_lesson_self_consistency():
+    """
+    Critical correctness requirement:
+    A valid lesson containing both 'immediate' and 'approval' such as:
+    'Do not promise an immediate refund for enterprise-contract customers. VP approval is required.'
+    must resolve to approval_required=True and NOT conflict with itself or with consistent policies.
+    """
+    lesson_text = "Do not promise an immediate refund for enterprise-contract customers. VP approval is required before making that commitment."
+    fact = ContradictionDetector.extract_policy_fact({"id": "HM-TEST", "text": lesson_text})
+    assert fact.approval_required is True
+    assert fact.action == "refund"
+    assert fact.customer_tier == "enterprise"
+
+    # Tested against another consistent approval memory
+    consistent_set = [
+        {"id": "HM-001", "text": lesson_text},
+        {"id": "HM-002", "text": "Require VP approval on all enterprise refund escalations."}
+    ]
+    conflicts = ContradictionDetector.detect_conflicts(consistent_set)
+    assert len(conflicts) == 0
+
+    # Tested against an explicit direct refund policy
+    conflicting_set = [
+        {"id": "HM-001", "text": lesson_text},
+        {"id": "HM-003", "text": "Direct refund without waiting for approval is permitted for enterprise customers."}
+    ]
+    found_conflicts = ContradictionDetector.detect_conflicts(conflicting_set)
+    assert len(found_conflicts) == 2

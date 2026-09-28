@@ -54,8 +54,8 @@
   $$\text{score} = \text{base} + 0.15 \times \min(\text{confirmations}, 4) - 0.30 \times \text{contradictions}$$
   Clamped between $0.05$ and $0.98$.
   Categorized as **Limited**, **Moderate**, or **Strong**.
-- **Contradiction Detection:** Opposing historical guidance (e.g., "require approval" vs. "direct refund immediately") is explicitly flagged rather than silently suppressed.
+- **Contradiction Detection:** Opposing historical guidance (e.g., "require approval" vs. "direct refund immediately") is extracted into structured `PolicyFact` directives (action, approval_required, tier) and grouped to detect conflicts deterministically, safely escalating to human operators (`action_type: escalation_required`) to prevent unsafe actions.
 
 ### D. LLM Reasoning Service (`backend/services/llm_service.py`)
-- Leverages Groq (`llama-3.3-70b-versatile`) when configured with `GROQ_API_KEY`.
-- Includes deterministic reasoning fallback when credentials are not present, ensuring predictable and verifiable behavior in all environments.
+- Leverages Groq (`openai/gpt-oss-120b`) when configured with `GROQ_API_KEY`.
+- Includes deterministic reasoning fallback when credentials are not present or during offline evaluation, ensuring predictable, safe, and verifiable behavior in all environments.

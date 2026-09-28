@@ -7,7 +7,7 @@ from backend.models.database import (
 )
 from backend.services.hindsight_service import hindsight_service, HindsightService
 from backend.services.llm_service import llm_service, LLMService
-from backend.services.applicability_service import ContradictionDetector
+from backend.services.applicability_service import ContradictionDetector, ApplicabilityEngine
 from backend.schemas.reasoning_schemas import AgentReasoningInput, AgentReasoningOutput
 
 class AgentPipelineService:
@@ -15,7 +15,7 @@ class AgentPipelineService:
     Executes the full agent reasoning pipeline:
       1. identify agent & task
       2. recall relevant memories from Hindsight
-      3. evaluate applicability & conflicts
+      3. evaluate applicability & conflicts via ApplicabilityEngine & ContradictionDetector
       4. pass to LLM / reasoning layer
       5. record interaction state & lineage
     """
@@ -47,45 +47,72 @@ class AgentPipelineService:
         try:
             recalled_items = self.hindsight.recall(query=query)
         except Exception:
-            # Fall back to local memory references if Hindsight is offline in development
+            recalled_items = []
+
+        # If Hindsight returns empty or is offline, fall back to local database memory references
+        if not recalled_items:
             local_refs = db.query(MemoryReferenceDB).filter(
                 MemoryReferenceDB.task_type == task_type
             ).all()
             for ref in local_refs:
                 recalled_items.append({
                     "id": ref.memory_id,
+                    "learnmesh_memory_id": ref.memory_id,
+                    "hindsight_document_id": ref.memory_id,
                     "text": ref.lesson,
                     "scope": ref.scope,
                     "confidence_score": ref.confidence_score
                 })
 
-        # 2. Filter memories based on agent applicability scope
+        # 2. Filter memories based on ApplicabilityEngine (scope, capability, task)
         agent_name = agent.name
+        agent_caps = agent.capabilities or []
         applicable_memories = []
+
         for item in recalled_items:
-            mem_id = getattr(item, "id", None) or item.get("id")
+            mem_id = getattr(item, "learnmesh_memory_id", None) or getattr(item, "id", None) or (item.get("id") if isinstance(item, dict) else None)
             mem_ref = db.query(MemoryReferenceDB).filter(MemoryReferenceDB.memory_id == mem_id).first()
+            
             if mem_ref:
-                if agent_name in mem_ref.scope or len(mem_ref.scope) == 0:
+                scope = mem_ref.scope or []
+                eval_result = ApplicabilityEngine.evaluate(
+                    agent_name=agent_name,
+                    agent_capabilities=agent_caps,
+                    memory_scope=scope,
+                    task_type=task_type
+                )
+                if eval_result["is_eligible"]:
                     applicable_memories.append({
                         "id": mem_ref.memory_id,
                         "text": mem_ref.lesson,
                         "source_agent": mem_ref.source_agent,
                         "confidence_level": mem_ref.confidence_level,
                         "confidence_score": mem_ref.confidence_score,
-                        "scope": mem_ref.scope
+                        "scope": mem_ref.scope,
+                        "applicability_reasons": eval_result.get("reasons", [])
                     })
             else:
-                # Direct item formatting if local or untracked
-                item_text = getattr(item, "text", "") or item.get("text", "")
-                applicable_memories.append({
-                    "id": mem_id,
-                    "text": item_text,
-                    "source_agent": "Shared Fleet",
-                    "confidence_level": "Limited",
-                    "confidence_score": 0.40,
-                    "scope": [agent_name]
-                })
+                # Direct item evaluation for dynamic or mock items
+                scope_val = getattr(item, "scope", None) or (item.get("scope") if isinstance(item, dict) else None)
+                # If no explicit agent scope list is specified, consider it broadcast/shared fleet memory
+                target_scope = scope_val if isinstance(scope_val, list) else []
+                eval_result = ApplicabilityEngine.evaluate(
+                    agent_name=agent_name,
+                    agent_capabilities=agent_caps,
+                    memory_scope=target_scope,
+                    task_type=task_type
+                )
+                if eval_result["is_eligible"]:
+                    item_text = getattr(item, "text", "") if not isinstance(item, dict) else item.get("text", "")
+                    applicable_memories.append({
+                        "id": mem_id,
+                        "text": item_text,
+                        "source_agent": "Shared Fleet",
+                        "confidence_level": "Limited",
+                        "confidence_score": 0.40,
+                        "scope": [agent_name],
+                        "applicability_reasons": eval_result.get("reasons", [])
+                    })
 
         # 3. Detect conflicting historical memories
         conflicts = ContradictionDetector.detect_conflicts(applicable_memories)
