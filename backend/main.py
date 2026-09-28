@@ -27,6 +27,19 @@ def read_root():
 from backend.repositories.db_session import init_db
 from backend.api.routes import router as api_router
 
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
+
 init_db()
 
 app.include_router(api_router)
+
+# Mount frontend public directory
+static_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "public")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    @app.get("/app")
+    def serve_app():
+        return FileResponse(os.path.join(static_dir, "index.html"))
