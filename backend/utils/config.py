@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     
     # Groq LLM configuration
     GROQ_API_KEY: str | None = None
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
 
     class Config:
         env_file = ".env"

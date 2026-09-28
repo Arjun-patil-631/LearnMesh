@@ -94,6 +94,7 @@ def create_and_run_interaction(req: CreateInteractionRequest, db: Session = Depe
             requires_approval=agent_output.requires_approval,
             used_memory_ids=agent_output.used_memory_ids,
             recalled_memories=applicable_memories,
+            reasoning_mode=agent_output.reasoning_mode,
             created_at=interaction.created_at
         )
     except Exception as e:

@@ -19,3 +19,4 @@ class AgentReasoningOutput(BaseModel):
     used_memory_ids: List[str] = Field(default_factory=list)
     decision_rationale: str
     confidence_assessment: str
+    reasoning_mode: str = "LIVE_AI_GROQ"  # or "DETERMINISTIC_FALLBACK"

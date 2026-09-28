@@ -77,6 +77,7 @@ INSTRUCTIONS:
         )
         raw_content = response.choices[0].message.content
         data = json.loads(raw_content)
+        data["reasoning_mode"] = "LIVE_AI_GROQ"
         return AgentReasoningOutput(**data)
 
     def _deterministic_fallback(self, input_data: AgentReasoningInput) -> AgentReasoningOutput:
@@ -108,7 +109,8 @@ INSTRUCTIONS:
                 decision_rationale=(
                     f"Applied shared organizational lesson {mem_id} requiring approval for enterprise refunds."
                 ),
-                confidence_assessment="Strong"
+                confidence_assessment="Strong",
+                reasoning_mode="DETERMINISTIC_FALLBACK"
             )
 
         # Baseline default behavior when no relevant shared memory is recalled:
@@ -119,7 +121,8 @@ INSTRUCTIONS:
                 requires_approval=False,
                 used_memory_ids=[],
                 decision_rationale="Standard automatic refund processing.",
-                confidence_assessment="Limited"
+                confidence_assessment="Limited",
+                reasoning_mode="DETERMINISTIC_FALLBACK"
             )
 
         return AgentReasoningOutput(
@@ -128,7 +131,8 @@ INSTRUCTIONS:
             requires_approval=False,
             used_memory_ids=[],
             decision_rationale="Standard query resolution.",
-            confidence_assessment="Moderate"
+            confidence_assessment="Moderate",
+            reasoning_mode="DETERMINISTIC_FALLBACK"
         )
 
 llm_service = LLMService()

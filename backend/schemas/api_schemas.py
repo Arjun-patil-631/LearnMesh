@@ -20,6 +20,7 @@ class InteractionResponseModel(BaseModel):
     requires_approval: bool
     used_memory_ids: List[str]
     recalled_memories: List[Dict[str, Any]]
+    reasoning_mode: str = "LIVE_AI_GROQ"
     created_at: datetime
 
 class CorrectionRequest(BaseModel):

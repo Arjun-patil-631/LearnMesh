@@ -66,10 +66,10 @@ class HindsightService:
         return self._client
 
     def ping(self) -> Dict[str, Any]:
-        """Verify connectivity to Hindsight server."""
+        """Verify connectivity to Hindsight server via isolated loop."""
         try:
             client = self.get_client()
-            version = client.get_version()
+            version = self._run_async_isolated(client.aget_version)
             self._is_connected = True
             return {"status": "connected", "version": getattr(version, "version", str(version))}
         except Exception as e:
