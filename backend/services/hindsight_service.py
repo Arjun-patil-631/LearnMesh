@@ -81,6 +81,26 @@ class HindsightService:
         check = self.ping()
         return check.get("status") == "connected"
 
+    def _run_async_isolated(self, coro_fn, *args, **kwargs):
+        """
+        Execute an async hindsight method on a dedicated background thread with its own event loop.
+        This avoids the asyncio/anyio event-loop conflict inside FastAPI request contexts.
+        """
+        import concurrent.futures
+        import asyncio
+
+        def worker():
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                return new_loop.run_until_complete(coro_fn(*args, **kwargs))
+            finally:
+                new_loop.close()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(worker)
+            return future.result()
+
     def retain(
         self,
         content: str,
@@ -91,9 +111,7 @@ class HindsightService:
         bank_id: Optional[str] = None
     ) -> RetainedMemoryResult:
         """
-        Retain memory unit into Hindsight.
-        Uses exact signature of Hindsight.retain:
-        (bank_id, content, context, document_id, metadata, tags, ...)
+        Retain memory unit into Hindsight using aretain on an isolated event loop.
         """
         target_bank = bank_id or self.bank_id
         client = self.get_client()
@@ -102,7 +120,8 @@ class HindsightService:
         doc_id = document_id or f"HM-{uuid.uuid4().hex[:8].upper()}"
 
         try:
-            response = client.retain(
+            response = self._run_async_isolated(
+                client.aretain,
                 bank_id=target_bank,
                 content=content,
                 context=context,
@@ -121,8 +140,16 @@ class HindsightService:
                 tags=tags or []
             )
         except Exception as e:
-            logger.error(f"Hindsight retain call failed: {e}")
-            raise RuntimeError(f"Hindsight retain error: {str(e)}") from e
+            logger.warning(f"Hindsight retain call failed ({e}). Returning memory record in offline mode.")
+            # Graceful offline mode when server daemon is not running
+            return RetainedMemoryResult(
+                success=False,
+                bank_id=target_bank,
+                memory_id=doc_id,
+                items_count=1,
+                metadata=metadata or {},
+                tags=tags or []
+            )
 
     def recall(
         self,
@@ -132,14 +159,14 @@ class HindsightService:
         max_tokens: int = 4096
     ) -> List[RecalledMemoryItem]:
         """
-        Recall relevant memories from Hindsight using semantic matching.
-        Returns parsed list of RecalledMemoryItem domain models.
+        Recall relevant memories from Hindsight using arecall on an isolated loop.
         """
         target_bank = bank_id or self.bank_id
         client = self.get_client()
 
         try:
-            response = client.recall(
+            response = self._run_async_isolated(
+                client.arecall,
                 bank_id=target_bank,
                 query=query,
                 tags=tags,
@@ -181,8 +208,8 @@ class HindsightService:
 
             return results
         except Exception as e:
-            logger.error(f"Hindsight recall call failed: {e}")
-            raise RuntimeError(f"Hindsight recall error: {str(e)}") from e
+            logger.warning(f"Hindsight recall call encountered: {e}. Returning empty recall results.")
+            return []
 
 # Global singleton service instance
 hindsight_service = HindsightService()

@@ -24,10 +24,9 @@ def read_root():
         "status": "operational"
     }
 
-@app.get("/api/system/status")
-def system_status():
-    return {
-        "status": "ok",
-        "environment": settings.ENVIRONMENT,
-        "database": "sqlite_connected"
-    }
+from backend.repositories.db_session import init_db
+from backend.api.routes import router as api_router
+
+init_db()
+
+app.include_router(api_router)

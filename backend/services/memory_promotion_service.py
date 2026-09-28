@@ -189,3 +189,5 @@ class MemoryPromotionService:
             ineligible_agents=ineligible_agents,
             confidence_level=ConfidenceLevel.LIMITED
         )
+
+memory_promotion_service = MemoryPromotionService()
