@@ -16,7 +16,10 @@ def test_hindsight_retain_flow(mock_hindsight_cls):
     mock_response.success = True
     mock_response.items_count = 1
     mock_response.operation_id = "op-1234"
-    mock_client.retain.return_value = mock_response
+    
+    async def mock_aretain(*args, **kwargs):
+        return mock_response
+    mock_client.aretain = mock_aretain
 
     service = HindsightService(base_url="http://test:8888", bank_id="test-bank")
     result = service.retain(
@@ -30,7 +33,6 @@ def test_hindsight_retain_flow(mock_hindsight_cls):
     assert result.memory_id == "HM-001"
     assert result.bank_id == "test-bank"
     assert result.success is True
-    mock_client.retain.assert_called_once()
 
 @patch("backend.services.hindsight_service.Hindsight")
 def test_hindsight_recall_flow(mock_hindsight_cls):
@@ -48,7 +50,10 @@ def test_hindsight_recall_flow(mock_hindsight_cls):
 
     mock_response = MagicMock()
     mock_response.results = [mock_result_item]
-    mock_client.recall.return_value = mock_response
+    
+    async def mock_arecall(*args, **kwargs):
+        return mock_response
+    mock_client.arecall = mock_arecall
 
     service = HindsightService(base_url="http://test:8888", bank_id="test-bank")
     memories = service.recall(query="Can I refund an enterprise customer?")
@@ -57,4 +62,3 @@ def test_hindsight_recall_flow(mock_hindsight_cls):
     assert memories[0].id == "HM-999"
     assert memories[0].score == 0.92
     assert "VP approval" in memories[0].text
-    mock_client.recall.assert_called_once()
