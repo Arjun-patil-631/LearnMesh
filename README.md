@@ -13,7 +13,7 @@
 **🌐 Live production:** https://learnmesh-enterprise.vercel.app
 **📖 API docs (Swagger):** https://learnmesh-enterprise.vercel.app/docs
 
-**👥 Built by Team LearnMesh:** Mohammed Shakib · Mohammed Moin · Arjun Patil
+**👥 Built by Team TECHNIVE:** Mohammed Shakib · Mohammed Moin · Arjun Patil
 
 ---
 
@@ -343,7 +343,7 @@ print("Audit Log Valid:", client.verify_audit_log()["is_valid"])
 
 ## Team
 
-Built with passion by **Team LearnMesh** for Hack With Hyderabad 3.0:
+Built with passion by **Team TECHNIVE** for Hack With Hyderabad 3.0:
 
 | Name | Role |
 |:---|:---|
