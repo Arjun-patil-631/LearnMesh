@@ -356,13 +356,14 @@ def list_agent_action_audits(
 @enterprise_router.post("/evaluation/run-benchmarks", response_model=EvaluationSuiteResponse)
 def run_evaluation_benchmarks(
     mode: str = Query("AFTER_LEARNING", description="Evaluation execution mode"),
+    fast: bool = Query(False, description="Deterministic fast mode: skips live LLM calls, runs full real pipeline logic (recall, guardrails, traces). Safe for serverless timeouts."),
     db: Session = Depends(get_db)
 ):
     """Runs the 20-scenario golden benchmark test suite and calculates quantifiable ROI metrics."""
     return EvaluationService.run_benchmark_suite(
         db=db,
         hindsight_service=hindsight_service,
-        llm_service=llm_service,
+        llm_service=None if fast else llm_service,
         mode=mode
     )
 

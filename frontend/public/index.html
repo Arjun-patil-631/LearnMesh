@@ -301,12 +301,16 @@
         }
       };
 
-      // Run Benchmark Suite
+      // Run Benchmark Suite (live AI first, fast deterministic fallback for serverless timeouts)
       const handleRunBenchmarks = async () => {
         setIsBenchmarking(true);
         try {
-          const res = await fetch("/api/v1/evaluation/run-benchmarks?mode=AFTER_LEARNING", { method: "POST" });
+          let res = await fetch("/api/v1/evaluation/run-benchmarks?mode=AFTER_LEARNING", { method: "POST" });
+          if (!res.ok) {
+            res = await fetch("/api/v1/evaluation/run-benchmarks?mode=AFTER_LEARNING&fast=true", { method: "POST" });
+          }
           const data = await res.json();
+          if (data.detail) throw new Error(data.detail);
           setBenchmarks(data);
           refreshData();
         } catch (e) {
