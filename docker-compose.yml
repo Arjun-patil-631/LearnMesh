@@ -1,0 +1,68 @@
+version: "3.8"
+
+services:
+  # 1. PostgreSQL Database Service
+  db:
+    image: postgres:16-alpine
+    container_name: learnmesh-db
+    environment:
+      POSTGRES_USER: learnmesh
+      POSTGRES_PASSWORD: learnmesh_secure_password
+      POSTGRES_DB: learnmesh
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U learnmesh -d learnmesh"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # 2. Vectorize Hindsight Long-Term Memory Daemon
+  hindsight:
+    image: vectorize/hindsight:latest
+    container_name: learnmesh-hindsight
+    ports:
+      - "8888:8888"
+    volumes:
+      - hindsight_data:/data
+    restart: unless-stopped
+
+  # 3. LearnMesh Core Backend API Service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: learnmesh-api
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql://learnmesh:learnmesh_secure_password@db:5432/learnmesh
+      - HINDSIGHT_BASE_URL=http://hindsight:8888
+      - HINDSIGHT_BANK_ID=learnmesh-org-fleet
+      - APP_PORT=8000
+      - LOG_LEVEL=INFO
+      - JSON_LOGS=true
+    restart: unless-stopped
+
+  # 4. Frontend Web Dashboard
+  frontend:
+    image: nginx:alpine
+    container_name: learnmesh-frontend
+    ports:
+      - "3000:80"
+    volumes:
+      - ./frontend/public:/usr/share/nginx/html:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  hindsight_data:

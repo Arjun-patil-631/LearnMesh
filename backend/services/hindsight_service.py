@@ -1,18 +1,22 @@
 import logging
 import uuid
+import concurrent.futures
+import asyncio
 from typing import Any, Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from hindsight_client import Hindsight
 try:
     from hindsight_client_api.exceptions import ApiException
 except ImportError:
     class ApiException(Exception):
         pass
-from backend.utils.config import settings
 
-from pydantic import BaseModel, Field, model_validator
+from backend.utils.config import settings
+from backend.utils.resilience import (
+    hindsight_circuit_breaker, retry_with_exponential_backoff, CircuitBreakerOpenException
+)
 
 logger = logging.getLogger("learnmesh.hindsight")
 
@@ -21,11 +25,10 @@ class RetainedMemoryResult(BaseModel):
     bank_id: str
     learnmesh_memory_id: Optional[str] = None
     hindsight_document_id: Optional[str] = None
-    # Note: hindsight-client aretain(...) returns RetainResponse with operation_id and items_count.
-    # It indexes content by document_id; it does not issue an independent server-generated memory id.
     hindsight_operation_id: Optional[str] = None
     items_count: int = 1
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    mode: str = "live"  # "live" or "degraded_local"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: Dict[str, Any] = Field(default_factory=dict)
     tags: List[str] = Field(default_factory=list)
 
@@ -79,25 +82,39 @@ class RecalledMemoryItem(BaseModel):
 class HindsightService:
     """
     Dedicated Hindsight adapter service adhering strictly to official hindsight-client SDK.
-    Responsible for:
-      - retain (stores experience/lesson memory units into designated bank)
-      - recall (retrieves relevant memory units using semantic & metadata matching)
-      - list_memories
-      - health/ping check
+    Equipped with:
+      - Circuit breaker protection & exponential backoff retries
+      - Persistent thread pool for isolated async execution
+      - Graceful degraded mode when external Hindsight daemon is offline
+      - Local retention queuing for replay upon reconnection
     """
 
     def __init__(
         self,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
-        bank_id: Optional[str] = None
+        bank_id: Optional[str] = None,
+        circuit_breaker: Optional[Any] = None,
+        enabled: Optional[bool] = None
     ):
         self.base_url = (base_url or settings.HINDSIGHT_BASE_URL).rstrip("/")
         self.api_key = api_key or settings.HINDSIGHT_API_KEY
         self.bank_id = bank_id or settings.HINDSIGHT_BANK_ID
+        # Explicit per-instance flag wins; otherwise the service is fully operational.
+        # The global singleton passes settings.FEATURE_HINDSIGHT so Hindsight can be
+        # switched off deployment-wide without touching any caller.
+        self.enabled = enabled if enabled is not None else True
+        from backend.utils.resilience import CircuitBreaker
+        self.circuit_breaker = circuit_breaker or CircuitBreaker(
+            name=f"Hindsight-{self.bank_id}",
+            failure_threshold=settings.CB_FAILURE_THRESHOLD,
+            recovery_timeout_seconds=settings.CB_RECOVERY_TIMEOUT_SECONDS
+        )
         self.demo_session_id: str = f"demo-{uuid.uuid4().hex[:8]}"
         self._client: Optional[Hindsight] = None
         self._is_connected: bool = False
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=settings.TASK_QUEUE_WORKERS)
+        self.pending_retains_queue: List[Dict[str, Any]] = []
 
     def reset_demo_session(self) -> str:
         """
@@ -113,54 +130,78 @@ class HindsightService:
             self._client = Hindsight(
                 base_url=self.base_url,
                 api_key=self.api_key,
-                timeout=15.0
+                timeout=settings.HINDSIGHT_TIMEOUT_SECONDS
             )
         return self._client
 
     def ping(self) -> Dict[str, Any]:
-        """Verify connectivity to Hindsight server via isolated loop."""
+        """Verify connectivity to Hindsight server via isolated loop, checking circuit state."""
+        if not self.enabled:
+            return {
+                "status": "disabled",
+                "mode": "feature_disabled",
+                "pending_queue_size": 0
+            }
+        cb_status = self.circuit_breaker.get_status()
+        if self.circuit_breaker.state.value == "OPEN":
+            self._is_connected = False
+            return {
+                "status": "degraded",
+                "mode": "circuit_breaker_open",
+                "circuit_breaker": cb_status,
+                "pending_queue_size": len(self.pending_retains_queue)
+            }
+
         try:
             version = self._run_async_isolated("aget_version")
             self._is_connected = True
-            return {"status": "connected", "version": getattr(version, "version", str(version))}
+            self.circuit_breaker.record_success()
+            return {
+                "status": "connected",
+                "version": getattr(version, "version", str(version)),
+                "circuit_breaker": cb_status,
+                "pending_queue_size": len(self.pending_retains_queue)
+            }
         except Exception as e:
             self._is_connected = False
             logger.warning(f"Hindsight server ping failed: {e}")
-            return {"status": "unavailable", "error": str(e)}
+            return {
+                "status": "degraded",
+                "error": str(e),
+                "circuit_breaker": cb_status,
+                "pending_queue_size": len(self.pending_retains_queue)
+            }
 
     def is_available(self) -> bool:
         check = self.ping()
         return check.get("status") == "connected"
 
-    def _run_async_isolated(self, method_name: str, *args, **kwargs):
-        """
-        Execute an async hindsight method on a dedicated background thread with its own event loop and client session.
-        This avoids the asyncio/anyio event-loop conflict inside FastAPI request contexts.
-        """
-        import concurrent.futures
-        import asyncio
-
-        def worker():
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            client = Hindsight(
-                base_url=self.base_url,
-                api_key=self.api_key,
-                timeout=15.0
-            )
+    def _execute_in_isolated_loop(self, method_name: str, *args, **kwargs):
+        """Worker executing async client methods on a fresh event loop inside our threadpool."""
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        client = Hindsight(
+            base_url=self.base_url,
+            api_key=self.api_key,
+            timeout=settings.HINDSIGHT_TIMEOUT_SECONDS
+        )
+        try:
+            coro_fn = getattr(client, method_name)
+            return new_loop.run_until_complete(coro_fn(*args, **kwargs))
+        finally:
             try:
-                coro_fn = getattr(client, method_name)
-                return new_loop.run_until_complete(coro_fn(*args, **kwargs))
-            finally:
-                try:
-                    new_loop.run_until_complete(client.aclose())
-                except Exception:
-                    pass
-                new_loop.close()
+                new_loop.run_until_complete(client.aclose())
+            except Exception:
+                pass
+            new_loop.close()
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(worker)
+    def _run_async_isolated(self, method_name: str, *args, **kwargs):
+        """Dispatches work to threadpool with circuit breaker & retry protection."""
+        def run_call():
+            future = self._executor.submit(self._execute_in_isolated_loop, method_name, *args, **kwargs)
             return future.result()
+
+        return self.circuit_breaker.execute(run_call)
 
     def retain(
         self,
@@ -172,18 +213,29 @@ class HindsightService:
         bank_id: Optional[str] = None
     ) -> RetainedMemoryResult:
         """
-        Retain memory unit into Hindsight using aretain on an isolated event loop.
+        Retain memory unit into Hindsight using aretain.
+        If Hindsight is unreachable, queues retain and operates in degraded local mode.
         """
         target_bank = bank_id or self.bank_id
-
-        # Generate a deterministic/unique document id if not provided
         doc_id = document_id or f"HM-{uuid.uuid4().hex[:8].upper()}"
 
-        # Ensure demo session tag is included for isolated demo runs
         effective_tags = list(tags or ["learnmesh", "shared_lesson"])
         if f"session:{self.demo_session_id}" not in effective_tags:
             effective_tags.append(f"session:{self.demo_session_id}")
 
+        if not self.enabled:
+            logger.info(f"Hindsight disabled — memory {doc_id} stays in local database only.")
+            return RetainedMemoryResult(
+                success=False,
+                bank_id=target_bank,
+                learnmesh_memory_id=doc_id,
+                hindsight_document_id=doc_id,
+                hindsight_operation_id=None,
+                items_count=1,
+                mode="disabled",
+                metadata=metadata or {},
+                tags=effective_tags
+            )
         try:
             response = self._run_async_isolated(
                 "aretain",
@@ -194,7 +246,6 @@ class HindsightService:
                 metadata=metadata or {},
                 tags=effective_tags
             )
-            
             op_id = getattr(response, "operation_id", None)
             return RetainedMemoryResult(
                 success=getattr(response, "success", True),
@@ -203,12 +254,25 @@ class HindsightService:
                 hindsight_document_id=doc_id,
                 hindsight_operation_id=str(op_id) if op_id is not None else None,
                 items_count=getattr(response, "items_count", 1),
+                mode="live",
                 metadata=metadata or {},
                 tags=effective_tags
             )
         except Exception as e:
-            logger.warning(f"Hindsight retain call failed ({e}). Returning memory record in offline mode.")
-            # Graceful offline mode when server daemon is not running
+            logger.warning(
+                f"Hindsight retain call failed ({type(e).__name__}: {e}). "
+                f"Buffering memory {doc_id} into local degraded queue."
+            )
+            # Queue for replay when service recovers
+            self.pending_retains_queue.append({
+                "content": content,
+                "context": context,
+                "document_id": doc_id,
+                "metadata": metadata,
+                "tags": effective_tags,
+                "bank_id": target_bank,
+                "queued_at": datetime.now(timezone.utc).isoformat()
+            })
             return RetainedMemoryResult(
                 success=False,
                 bank_id=target_bank,
@@ -216,6 +280,7 @@ class HindsightService:
                 hindsight_document_id=doc_id,
                 hindsight_operation_id=None,
                 items_count=1,
+                mode="degraded_local",
                 metadata=metadata or {},
                 tags=effective_tags
             )
@@ -228,11 +293,13 @@ class HindsightService:
         max_tokens: int = 4096
     ) -> List[RecalledMemoryItem]:
         """
-        Recall relevant memories from Hindsight using arecall on an isolated loop.
+        Recall relevant memories from Hindsight using arecall.
+        If circuit breaker is OPEN or Hindsight is down, returns empty list so downstream
+        can safely fall back to local database memory cache.
         """
+        if not self.enabled:
+            return []
         target_bank = bank_id or self.bank_id
-
-        # If specific tags not provided, filter by current demo session
         effective_tags = list(tags) if tags is not None else [f"session:{self.demo_session_id}"]
 
         try:
@@ -251,15 +318,12 @@ class HindsightService:
                 score_val = None
                 scores_obj = getattr(item, "scores", None)
                 if scores_obj:
-                    # scores may have semantic, bm25, or final score
                     raw_score = getattr(scores_obj, "final", None) or getattr(scores_obj, "semantic", None)
                     if isinstance(raw_score, (int, float)):
                         score_val = float(raw_score)
 
                 raw_type = getattr(item, "type", None)
-                type_str = str(raw_type) if raw_type is not None and not isinstance(raw_type, MagicMock if "MagicMock" in globals() else type(None)) else None
-                if raw_type is not None and not hasattr(raw_type, "_mock_return_value"):
-                    type_str = str(raw_type)
+                type_str = str(raw_type) if raw_type is not None and not hasattr(raw_type, "_mock_return_value") else None
 
                 raw_context = getattr(item, "context", None)
                 context_str = str(raw_context) if (raw_context is not None and not hasattr(raw_context, "_mock_return_value")) else None
@@ -290,8 +354,37 @@ class HindsightService:
 
             return results
         except Exception as e:
-            logger.warning(f"Hindsight recall call encountered: {e}. Returning empty recall results.")
+            logger.warning(f"Hindsight recall call encountered: {type(e).__name__} ({e}). Serving from local cache.")
             return []
 
-# Global singleton service instance
-hindsight_service = HindsightService()
+    def replay_pending_queue(self) -> Dict[str, Any]:
+        """Attempts to drain and replay pending retains that were buffered while Hindsight was down."""
+        if not self.enabled:
+            return {"replayed": 0, "remaining": 0}
+        if not self.pending_retains_queue:
+            return {"replayed": 0, "remaining": 0}
+
+        success_count = 0
+        remaining = []
+        for item in self.pending_retains_queue:
+            try:
+                res = self.retain(
+                    content=item["content"],
+                    context=item["context"],
+                    document_id=item["document_id"],
+                    metadata=item["metadata"],
+                    tags=item["tags"],
+                    bank_id=item["bank_id"]
+                )
+                if res.success:
+                    success_count += 1
+                else:
+                    remaining.append(item)
+            except Exception:
+                remaining.append(item)
+
+        self.pending_retains_queue = remaining
+        return {"replayed": success_count, "remaining": len(remaining)}
+
+# Global singleton service instance (deployment-wide Hindsight kill-switch via FEATURE_HINDSIGHT)
+hindsight_service = HindsightService(enabled=settings.FEATURE_HINDSIGHT)

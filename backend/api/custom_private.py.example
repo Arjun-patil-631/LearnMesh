@@ -1,0 +1,18 @@
+"""
+TEMPLATE for private APIs (safe to commit — contains NO secrets).
+
+Copy this file to `custom_private.py` and add your real endpoints + keys via `.env`:
+    cp backend/api/custom_private.py.example backend/api/custom_private.py
+
+`custom_private.py` is gitignored: it stays on your machine and is NEVER
+uploaded to GitHub or Vercel. The app auto-loads it when present.
+"""
+import os
+from fastapi import APIRouter, Header, HTTPException
+
+private_router = APIRouter()
+
+
+@private_router.get("/private/ping")
+def private_ping():
+    return {"status": "private-ok", "source": "local-only, never uploaded"}

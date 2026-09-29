@@ -48,3 +48,19 @@ build/
 .idea/
 *.swp
 *.swo
+
+# Local virtualenv (never commit)
+.venv/
+
+# Vercel local link (machine-specific)
+.vercel/
+
+# PRIVATE APIs - exist only on your machine, NEVER uploaded to GitHub/Vercel
+backend/api/custom_private.py
+private_apis/
+
+# CI workflows (needs token 'workflow' scope; add separately later)
+.github/
+
+.vercel
+.env*

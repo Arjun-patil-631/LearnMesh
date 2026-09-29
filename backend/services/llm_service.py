@@ -3,33 +3,41 @@ import logging
 from typing import Optional
 from backend.utils.config import settings
 from backend.schemas.reasoning_schemas import AgentReasoningInput, AgentReasoningOutput
+from backend.utils.resilience import groq_circuit_breaker, retry_with_exponential_backoff
 
 logger = logging.getLogger("learnmesh.llm")
 
 class LLMService:
     """
     LLM reasoning service utilizing Groq when configured,
-    with robust structured output validation and deterministic fallbacks.
+    with circuit breaker protection, retry backoff, and deterministic fallback.
     """
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or settings.GROQ_API_KEY
         self.model = model or settings.GROQ_MODEL
+        self.gemini_key = settings.GEMINI_API_KEY
+        self.gemini_model = settings.GEMINI_MODEL
         self._client = None
 
     def is_available(self) -> bool:
-        return bool(self.api_key and self.api_key.startswith("gsk_"))
+        if not (self.api_key and self.api_key.startswith("gsk_")):
+            return False
+        return groq_circuit_breaker.can_execute()
+
+    def is_gemini_available(self) -> bool:
+        return bool(self.gemini_key and str(self.gemini_key).strip())
 
     def get_client(self):
-        if self._client is None and self.is_available():
+        if self._client is None and bool(self.api_key and self.api_key.startswith("gsk_")):
             import groq
-            self._client = groq.Groq(api_key=self.api_key)
+            self._client = groq.Groq(api_key=self.api_key, timeout=settings.GROQ_TIMEOUT_SECONDS)
         return self._client
 
     def generate_agent_response(self, input_data: AgentReasoningInput) -> AgentReasoningOutput:
         """
         Generate structured agent response using Groq if available,
-        or deterministic memory-guided reasoning fallback.
+        then Gemini fallback, or deterministic memory-guided reasoning fallback.
         """
         # Safety gate: If organizational memories are directly contradictory,
         # escalate immediately to avoid non-deterministic model arbitration
@@ -38,14 +46,29 @@ class LLMService:
 
         if self.is_available():
             try:
-                return self._call_groq_reasoning(input_data)
+                return groq_circuit_breaker.execute(self._call_groq_reasoning, input_data)
             except Exception as e:
-                logger.warning(f"Groq generation failed ({e}), falling back to deterministic reasoning.")
+                logger.warning(
+                    f"Groq generation failed ({type(e).__name__}: {e}), "
+                    f"circuit breaker state: {groq_circuit_breaker.state.value}. "
+                    f"Trying Gemini fallback."
+                )
+
+        if self.is_gemini_available():
+            try:
+                return self._call_gemini_reasoning(input_data)
+            except Exception as e:
+                logger.warning(
+                    f"Gemini generation failed ({type(e).__name__}: {e}). "
+                    f"Falling back to deterministic reasoning."
+                )
 
         return self._deterministic_fallback(input_data)
 
     def _call_groq_reasoning(self, input_data: AgentReasoningInput) -> AgentReasoningOutput:
         client = self.get_client()
+        if client is None:
+            raise ValueError("Groq client not initialized")
 
         memories_text = json.dumps(input_data.relevant_memories, indent=2)
         conflicts_text = json.dumps(input_data.conflicting_memories, indent=2)
@@ -85,6 +108,56 @@ INSTRUCTIONS:
         raw_content = response.choices[0].message.content
         data = json.loads(raw_content)
         data["reasoning_mode"] = "LIVE_AI_GROQ"
+        return AgentReasoningOutput(**data)
+
+    def _call_gemini_reasoning(self, input_data: AgentReasoningInput) -> AgentReasoningOutput:
+        """Live reasoning via Google Gemini REST API (no extra SDK dependency)."""
+        import re
+        import httpx
+
+        memories_text = json.dumps(input_data.relevant_memories, indent=2)
+        conflicts_text = json.dumps(input_data.conflicting_memories, indent=2)
+
+        prompt = f"""
+You are the AI reasoning engine for {input_data.agent_name}.
+TASK: {input_data.task_type}
+CUSTOMER TIER: {input_data.customer_tier}
+USER REQUEST: "{input_data.user_prompt}"
+
+RELEVANT ORGANIZATIONAL MEMORIES:
+{memories_text}
+
+CONFLICTS / CONTRADICTIONS:
+{conflicts_text}
+
+INSTRUCTIONS:
+1. If conflicting memories exist, set "action_type": "escalation_required", "requires_approval": true, cite both memory IDs in "used_memory_ids".
+2. If organizational memories require approval for enterprise refund requests, follow that lesson strictly and set "action_type": "approval_required", "requires_approval": true.
+3. Otherwise, proceed with standard resolution.
+4. Return ONLY valid JSON with keys: response_text, action_type (refund_approved | approval_required | escalation_required | general_response), requires_approval, used_memory_ids, decision_rationale, confidence_assessment (Strong | Moderate | Limited).
+"""
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{self.gemini_model}:generateContent"
+        )
+        resp = httpx.post(
+            url,
+            params={"key": self.gemini_key},
+            json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"},
+            },
+            timeout=settings.GEMINI_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        try:
+            raw_text = payload["candidates"][0]["content"]["parts"][0]["text"]
+        except (KeyError, IndexError, TypeError) as e:
+            raise ValueError(f"Unexpected Gemini response shape: {e}")
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text.strip(), flags=re.IGNORECASE)
+        data = json.loads(cleaned)
+        data["reasoning_mode"] = "LIVE_AI_GEMINI"
         return AgentReasoningOutput(**data)
 
     def _deterministic_fallback(self, input_data: AgentReasoningInput) -> AgentReasoningOutput:
