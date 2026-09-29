@@ -13,6 +13,8 @@
 **🌐 Live production:** https://learnmesh-enterprise.vercel.app
 **📖 API docs (Swagger):** https://learnmesh-enterprise.vercel.app/docs
 
+**👥 Built by Team LearnMesh:** Mohammed Shakib · Mohammed Moin · Arjun Patil
+
 ---
 
 ## Table of Contents
@@ -336,6 +338,18 @@ print("Audit Log Valid:", client.verify_audit_log()["is_valid"])
 - **Total Tests**: 46 / 46 Passing
 - **Live checks**: `/health` healthy, pipeline `200 LIVE_AI_GROQ`, metrics measured from live DB
 - **Coverage**: idempotency, governance, PII redaction, hash chain, 7-step pipeline, real-metric computation
+
+---
+
+## Team
+
+Built with passion by **Team LearnMesh** for Hack With Hyderabad 3.0:
+
+| Name | Role |
+|:---|:---|
+| **Mohammed Shakib** | Backend, AI Pipeline & Deployment |
+| **Mohammed Moin** | Frontend & Product Design |
+| **Arjun Patil** | Architecture, Governance & QA |
 
 ---
 
